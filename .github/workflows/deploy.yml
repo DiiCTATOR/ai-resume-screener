@@ -1,5 +1,5 @@
 
-name: Build and deploy to AWS EC2
+name: Build and Deploy AI Resume Screener to AWS EC2
 
 on:
   push:
@@ -20,17 +20,18 @@ concurrency:
 jobs:
 
   # ==========================================
-  # JOB 1: BUILD AND TEST APPLICATION
+  # JOB 1: BUILD APPLICATION
   # ==========================================
+
   build:
-    name: Build application
+    name: Build Application
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v7
 
-      - name: Set up Node.js 22
+      - name: Setup Node.js 22
         uses: actions/setup-node@v7
         with:
           node-version: '22'
@@ -39,30 +40,32 @@ jobs:
             backend_ai/package-lock.json
             mern_ai/package-lock.json
 
-      - name: Check Node and npm versions
+      - name: Check Node and NPM Versions
         run: |
           node --version
           npm --version
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: npm run install:all
 
-      - name: Build frontend
+      - name: Build Frontend
         run: npm run build
 
-      - name: Verify build output
+      - name: Verify Build Output
         run: |
           if [ ! -f backend_ai/build/index.html ]; then
             echo "ERROR: Frontend build output not found!"
             exit 1
           fi
+
           echo "Frontend build verified successfully."
 
   # ==========================================
   # JOB 2: DEPLOY APPLICATION TO AWS EC2
   # ==========================================
+
   deploy:
-    name: Deploy to EC2
+    name: Deploy to AWS EC2
     needs: build
 
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -70,7 +73,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Deploy over SSH
+      - name: Deploy Over SSH
         uses: appleboy/ssh-action@v1.2.0
 
         with:
@@ -85,20 +88,27 @@ jobs:
             set -eu
 
             echo "================================"
-            echo "Starting EC2 deployment"
+            echo "Starting EC2 Deployment"
             echo "================================"
 
             APP_DIR="$HOME/ai-resume-screener"
 
-            # ----------------------------------
-            # STEP 1: Install required packages
-            # ----------------------------------
+            # ==================================
+            # STEP 1: CHECK REQUIRED PACKAGES
+            # ==================================
 
             echo "Checking Git..."
 
             if ! command -v git >/dev/null 2>&1; then
               sudo apt-get update
               sudo apt-get install -y git
+            fi
+
+            echo "Checking Curl..."
+
+            if ! command -v curl >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y curl
             fi
 
             echo "Checking Node.js..."
@@ -114,112 +124,156 @@ jobs:
             echo "NPM version:"
             npm --version
 
-            # ----------------------------------
-            # STEP 2: Clone repository if needed
-            # ----------------------------------
+            # ==================================
+            # STEP 2: CLONE REPOSITORY
+            # ==================================
 
             if [ ! -d "$APP_DIR/.git" ]; then
-              echo "Cloning repository..."
+
+              echo "Cloning GitHub repository..."
 
               git clone \
                 --branch main \
                 https://github.com/DiiCTATOR/ai-resume-screener.git \
                 "$APP_DIR"
+
             fi
 
-            # ----------------------------------
-            # STEP 3: Pull latest changes
-            # ----------------------------------
+            # ==================================
+            # STEP 3: UPDATE SOURCE CODE
+            # ==================================
 
             cd "$APP_DIR"
 
-            echo "Pulling latest code..."
+            echo "Fetching latest changes..."
 
             git fetch origin main
-            git reset --hard origin/main
 
-            # ----------------------------------
-            # STEP 4: Configure environment files
-            # ----------------------------------
+            # Ensure the server is on the main branch
+            git checkout main
+
+            # Update to the latest committed code
+            git pull --ff-only origin main
+
+            # ==================================
+            # STEP 4: CHECK ENVIRONMENT FILES
+            # ==================================
 
             echo "Checking environment files..."
 
             if [ ! -f backend_ai/.env ]; then
+
               if [ -f backend_ai/.env.example ]; then
                 cp backend_ai/.env.example backend_ai/.env
+                chmod 600 backend_ai/.env
                 echo "Created backend_ai/.env"
               else
                 echo "ERROR: backend_ai/.env.example missing"
                 exit 1
               fi
+
             fi
 
             if [ ! -f mern_ai/.env ]; then
+
               if [ -f mern_ai/.env.example ]; then
                 cp mern_ai/.env.example mern_ai/.env
+                chmod 600 mern_ai/.env
                 echo "Created mern_ai/.env"
               else
                 echo "ERROR: mern_ai/.env.example missing"
                 exit 1
               fi
+
             fi
 
-            # ----------------------------------
-            # STEP 5: Install dependencies
-            # ----------------------------------
+            # ==================================
+            # STEP 5: INSTALL DEPENDENCIES
+            # ==================================
 
             echo "Installing application dependencies..."
 
             npm run install:all
 
-            # ----------------------------------
-            # STEP 6: Build frontend
-            # ----------------------------------
+            # ==================================
+            # STEP 6: BUILD FRONTEND
+            # ==================================
 
             echo "Building frontend..."
 
             npm run build
 
-            test -f backend_ai/build/index.html
-
-            echo "Frontend build completed."
-
-            # ----------------------------------
-            # STEP 7: Install PM2
-            # ----------------------------------
-
-            if ! command -v pm2 >/dev/null 2>&1; then
-              echo "Installing PM2..."
-              sudo npm install --global pm2
+            if [ ! -f backend_ai/build/index.html ]; then
+              echo "ERROR: Frontend build failed!"
+              exit 1
             fi
 
+            echo "Frontend build completed successfully."
+
+            # ==================================
+            # STEP 7: INSTALL PM2
+            # ==================================
+
+            if ! command -v pm2 >/dev/null 2>&1; then
+
+              echo "Installing PM2..."
+
+              sudo npm install --global pm2
+
+            fi
+
+            echo "PM2 version:"
             pm2 --version
 
-            # ----------------------------------
-            # STEP 8: Start or reload application
-            # ----------------------------------
+            # ==================================
+            # STEP 8: START APPLICATION
+            # ==================================
 
             echo "Starting application..."
 
             if [ ! -f ecosystem.config.js ]; then
-              echo "ERROR: ecosystem.config.js not found"
+              echo "ERROR: ecosystem.config.js missing"
               exit 1
             fi
 
             pm2 startOrReload ecosystem.config.js --update-env
 
-            # ----------------------------------
-            # STEP 9: Save PM2 process list
-            # ----------------------------------
+            # ==================================
+            # STEP 9: SAVE PM2 PROCESS
+            # ==================================
+
+            echo "Saving PM2 process list..."
 
             pm2 save
 
-            # ----------------------------------
-            # STEP 10: Verify deployment
-            # ----------------------------------
+            # ==================================
+            # STEP 10: HEALTH CHECK
+            # ==================================
+
+            echo "Checking application health..."
+
+            sleep 5
+
+            if ! curl -fsS \
+              http://127.0.0.1:4000/api/health; then
+
+              echo "ERROR: Application health check failed!"
+
+              pm2 logs ai-resume-screener --lines 50 --nostream
+
+              exit 1
+
+            fi
+
+            echo ""
+            echo "Application health check passed."
+
+            # ==================================
+            # STEP 11: DEPLOYMENT STATUS
+            # ==================================
 
             echo "================================"
-            echo "Deployment completed"
+            echo "Deployment Completed Successfully"
             echo "================================"
 
             pm2 status
