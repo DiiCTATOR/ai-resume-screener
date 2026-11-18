@@ -81,9 +81,6 @@ const Dashboard = () => {
                         </label>
                         <input id="file-upload" type="file" accept="application/pdf" onChange={handleOnChangeFile} />
                     </div>
-                    <div className={styles.analyzeAIBtn} onClick={handleUpload}>
-                        Analyze With AI
-                    </div>
                 </div>
 
                 <div className={styles.jobDesc}>
@@ -95,7 +92,13 @@ const Dashboard = () => {
                         rows={10}
                         cols={50}
                     />
-                    <div className={styles.AnalyzeBtn} onClick={handleUpload}>Analyze</div>
+                    <div
+                        className={styles.AnalyzeBtn}
+                        onClick={handleUpload}
+                        style={{ cursor: loading ? "wait" : "pointer", opacity: loading ? 0.7 : 1 }}
+                    >
+                        {loading ? "Analyzing..." : "Analyze"}
+                    </div>
                 </div>
             </div>
 
