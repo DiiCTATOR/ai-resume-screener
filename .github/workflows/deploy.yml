@@ -1,0 +1,76 @@
+name: CI/CD Pipeline - Build and Deploy to AWS EC2
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  # =========================================================================
+  # 1. Continuous Integration (CI): Verify Build
+  # =========================================================================
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Dependencies
+        run: |
+          npm run install:all
+
+      - name: Build Frontend into backend_ai/build
+        run: |
+          npm run build
+
+      - name: Verify Build Output
+        run: |
+          test -f backend_ai/build/index.html || { echo "Build artifact missing!"; exit 1; }
+          echo "✅ Build completed and verified successfully!"
+
+  # =========================================================================
+  # 2. Continuous Deployment (CD): Deploy to AWS EC2 via SSH
+  # =========================================================================
+  deploy:
+    name: Deploy to EC2
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to AWS EC2 via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            echo "🚀 Pulling latest changes from GitHub..."
+            cd ~/ai-resume-screener || cd /home/ubuntu/ai-resume-screener
+            
+            git pull origin main
+            
+            echo "📥 Updating dependencies..."
+            npm run install:all
+            
+            echo "🔨 Building frontend..."
+            npm run build
+            
+            echo "🔄 Reloading PM2 process..."
+            pm2 reload ecosystem.config.js --update-env || pm2 start ecosystem.config.js
+            pm2 save
+            
+            echo "🎉 Application successfully deployed!"
+            pm2 status
