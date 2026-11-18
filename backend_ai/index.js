@@ -20,13 +20,13 @@ app.use('/api/user',UserRoutes)
 app.use('/api/resume',ResumeRoutes)
 
 
-// // Serve static files from the build folder
-// app.use(express.static(path.join(__dirname, "build")));
+// Serve static files from the build folder
+app.use(express.static(path.join(__dirname, "build")));
 
-// // Catch-all route: send index.html for React Router
-// app.get("/", (req, res) => {
-//   res.sendFile(path.join(__dirname, "build", "index.html"));
-// });
+// Catch-all route: send index.html for React Router
+app.get('/{*splat}', (req, res) => {
+    res.sendFile(path.join(__dirname, "build", "index.html"));
+});
 
 app.listen(PORT,()=>{
     console.log("backend is running on port",PORT)

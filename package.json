@@ -1,0 +1,12 @@
+{
+  "name": "ai-resume-screener",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "install:all": "npm --prefix backend_ai install && npm --prefix mern_ai install",
+    "build": "npm --prefix mern_ai run build",
+    "start": "node backend_ai/index.js",
+    "dev:backend": "nodemon backend_ai/index.js",
+    "dev:frontend": "npm --prefix mern_ai run dev"
+  }
+}
