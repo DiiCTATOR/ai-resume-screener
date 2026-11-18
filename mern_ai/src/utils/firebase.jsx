@@ -1,4 +1,4 @@
-import { initializeApp } from "firebase/app";
+import { initializeApp, getApps } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 
 const firebaseConfig = {
@@ -11,9 +11,18 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || ""
 };
 
-const app = initializeApp(firebaseConfig);
+let app = null;
+let auth = null;
+let provider = null;
 
-const auth = getAuth(app);
-const provider = new GoogleAuthProvider();
+try {
+  if (firebaseConfig.apiKey && firebaseConfig.apiKey.trim() !== "") {
+    app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+    auth = getAuth(app);
+    provider = new GoogleAuthProvider();
+  }
+} catch (err) {
+  console.warn("Firebase initialization warning:", err.message);
+}
 
 export { auth, provider };

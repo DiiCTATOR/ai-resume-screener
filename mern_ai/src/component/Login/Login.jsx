@@ -15,6 +15,10 @@ const Login = () => {
     const navigate = useNavigate();
     const handleLogin = async () => {
         try {
+            if (!auth || !provider) {
+                alert("Please set up Firebase credentials in mern_ai/.env to use Google Login.");
+                return;
+            }
             {/* Please watch the video for ful source code */ }
 
 
