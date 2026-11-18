@@ -11,6 +11,22 @@ echo "🚀 Starting AWS EC2 Deployment for AI Resume Screener..."
 echo "📦 Updating system packages..."
 sudo apt update -y
 
+# 1.5 Add Swap Memory (Prevents Out-Of-Memory crashes on t2.micro / t3.micro)
+SWAP_TOTAL=$(free -m | awk '/^Swap:/ {print $2}')
+if [ -z "$SWAP_TOTAL" ] || [ "$SWAP_TOTAL" -lt 1024 ]; then
+    echo "🧠 Creating 2GB swap file to prevent Out-Of-Memory freeze on micro instances..."
+    sudo swapoff -a 2>/dev/null || true
+    sudo rm -f /swapfile 2>/dev/null || true
+    sudo fallocate -l 2G /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+    sudo chmod 600 /swapfile
+    sudo mkswap /swapfile
+    sudo swapon /swapfile
+    if ! grep -q '/swapfile' /etc/fstab; then
+        echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+    fi
+    echo "✅ 2GB Swap memory activated."
+fi
+
 # 2. Check if Node.js is installed, if not install Node.js 22 LTS
 if ! command -v node &> /dev/null; then
     echo "⬇️ Installing Node.js 22 LTS..."
