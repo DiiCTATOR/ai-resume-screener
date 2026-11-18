@@ -1,197 +1,128 @@
 
-name: Build and Deploy AI Resume Screener to AWS EC2
+name: Deploy AI Resume Screener
 
 on:
   push:
     branches:
       - main
-
-  pull_request:
-    branches:
-      - main
-
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ai-resume-screener-${{ github.ref }}
-  cancel-in-progress: true
+  group: ai-resume-screener-production
+  cancel-in-progress: false
 
 jobs:
-
-  # ==========================================
-  # JOB 1: BUILD AND VERIFY ON EC2
-  # ==========================================
-
-  build:
-    name: Build Application on EC2
-    runs-on: [self-hosted, linux, x64]
-
-    steps:
-
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Check EC2 Environment
-        run: |
-          set -euo pipefail
-          whoami
-          node --version
-          npm --version
-          git --version
-          df -h
-          free -h
-
-      - name: Install Dependencies
-        run: |
-          set -euo pipefail
-          npm run install:all
-
-      - name: Build Frontend
-        run: |
-          set -euo pipefail
-          npm run build
-
-      - name: Verify Build Output
-        run: |
-          set -euo pipefail
-
-          if [ ! -f backend_ai/build/index.html ]; then
-            echo "Frontend build output missing!"
-            exit 1
-          fi
-
-          echo "Build successful."
-
-  # ==========================================
-  # JOB 2: DEPLOY ON SAME EC2 RUNNER
-  # ==========================================
-
   deploy:
-    name: Deploy Application on EC2
-    needs: build
-
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
+    name: Build and Deploy on EC2
     runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
+
+    env:
+      APP_DIR: /home/ubuntu/ai-resume-screener
+      DEPS_MARKER: /home/ubuntu/.cache/ai-resume-screener-deps.sha256
+      NODE_OPTIONS: --max-old-space-size=384
 
     steps:
-
-      - name: Check Deployment Environment
+      - name: Sync application source
         run: |
-          set -euo pipefail
-          whoami
-          pwd
-          pm2 --version || true
+          set -e
+          cd "$APP_DIR"
+          git fetch --prune origin main
+          git reset --hard origin/main
 
-      - name: Verify Application Directory
+      - name: Verify deployment configuration
         run: |
-          set -euo pipefail
+          set -e
+          cd "$APP_DIR"
 
-          APP_DIR="/home/ubuntu/ai-resume-screener"
+          test -f backend_ai/.env
+          test -f ecosystem.config.js
+          test -f backend_ai/package-lock.json
+          test -f mern_ai/package-lock.json
 
-          if [ ! -d "$APP_DIR/.git" ]; then
-            echo "Application repository not found!"
-            exit 1
+          echo "Deployment files verified."
+
+      - name: Install dependencies only when required
+        run: |
+          set -e
+          cd "$APP_DIR"
+
+          CURRENT_HASH=$(
+            sha256sum \
+              package.json \
+              backend_ai/package.json \
+              backend_ai/package-lock.json \
+              mern_ai/package.json \
+              mern_ai/package-lock.json \
+              | sha256sum | awk '{print $1}'
+          )
+
+          SAVED_HASH=$(cat "$DEPS_MARKER" 2>/dev/null || true)
+
+          if [ "$CURRENT_HASH" = "$SAVED_HASH" ] \
+            && [ -d backend_ai/node_modules ] \
+            && [ -x mern_ai/node_modules/.bin/vite ]; then
+            echo "Dependencies unchanged. Skipping installation."
+          else
+            AVAILABLE_KB=$(df -Pk "$APP_DIR" | awk 'NR==2 {print $4}')
+
+            if [ "$AVAILABLE_KB" -lt 1048576 ]; then
+              echo "ERROR: Less than 1 GB disk space available."
+              echo "Free disk space before installing dependencies."
+              exit 1
+            fi
+
+            echo "Installing backend dependencies..."
+            npm ci --prefix backend_ai --no-audit --no-fund --maxsockets=1
+
+            echo "Installing frontend dependencies..."
+            npm ci --prefix mern_ai --no-audit --no-fund --maxsockets=1
+
+            printf '%s\n' "$CURRENT_HASH" > "$DEPS_MARKER"
           fi
 
-      - name: Pull Latest Code
+      - name: Build frontend
         run: |
-          set -euo pipefail
-
-          cd /home/ubuntu/ai-resume-screener
-
-          git fetch origin main
-          git checkout main
-          git pull --ff-only origin main
-
-      - name: Configure Environment
-        run: |
-          set -euo pipefail
-
-          cd /home/ubuntu/ai-resume-screener
-
-          test -f backend_ai/.env || {
-            echo "ERROR: backend_ai/.env is missing."
-            exit 1
-          }
-
-          chmod 600 backend_ai/.env
-
-          if [ -f mern_ai/.env ]; then
-            chmod 600 mern_ai/.env
-          fi
-
-      - name: Install Application Dependencies
-        run: |
-          set -euo pipefail
-
-          cd /home/ubuntu/ai-resume-screener
-
-          npm run install:all
-
-      - name: Build Production Frontend
-        run: |
-          set -euo pipefail
-
-          cd /home/ubuntu/ai-resume-screener
+          set -e
+          cd "$APP_DIR"
 
           npm run build
 
           test -f backend_ai/build/index.html
+          echo "Frontend build completed."
 
-      - name: Check PM2
+      - name: Reload application with PM2
         run: |
-          set -euo pipefail
+          set -e
+          cd "$APP_DIR"
 
-          if ! command -v pm2 >/dev/null 2>&1; then
-            npm install -g pm2
-          fi
-
-      - name: Start or Reload Application
-        run: |
-          set -euo pipefail
-
-          cd /home/ubuntu/ai-resume-screener
-
-          test -f ecosystem.config.js
+          command -v pm2
 
           pm2 startOrReload ecosystem.config.js --update-env
-
           pm2 save
+          pm2 status
 
-      - name: Application Health Check
+      - name: Verify application health
         run: |
-          set -euo pipefail
+          set -e
+          cd "$APP_DIR"
 
-          echo "Checking application health..."
-
-          for i in {1..12}; do
-            if curl -fsS \
+          for attempt in $(seq 1 20); do
+            if curl -fsS --max-time 5 \
               http://127.0.0.1:4000/api/health; then
-
-              echo "Application is healthy."
+              echo
+              echo "Deployment successful. Health check passed."
               exit 0
             fi
 
-            echo "Attempt $i failed. Retrying..."
-            sleep 5
+            echo "Health check attempt $attempt failed. Retrying..."
+            sleep 3
           done
 
-          echo "Application health check failed."
-
-          pm2 logs ai-resume-screener \
-            --lines 50 \
-            --nostream || true
-
-          exit 1
-
-      - name: Deployment Status
-        run: |
-          echo "=================================="
-          echo "AI RESUME SCREENER DEPLOYED"
-          echo "=================================="
-
+          echo "ERROR: Application health check failed."
           pm2 status
+          pm2 logs --lines 50 --nostream || true
+          exit 1
