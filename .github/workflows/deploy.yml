@@ -57,20 +57,47 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           port: 22
           script: |
-            echo "🚀 Pulling latest changes from GitHub..."
-            cd ~/ai-resume-screener || cd /home/ubuntu/ai-resume-screener
+            echo "🚀 Deploying to EC2..."
             
+            # Ensure swap space exists to prevent memory errors on micro instances
+            if [ -z "$(swapon --show)" ]; then
+              echo "🧠 Creating 2GB swap space..."
+              sudo fallocate -l 2G /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+              sudo chmod 600 /swapfile
+              sudo mkswap /swapfile
+              sudo swapon /swapfile
+              echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+            fi
+
+            # Clone repository if not already cloned
+            if [ ! -d "$HOME/ai-resume-screener" ]; then
+              echo "📥 Cloning repository..."
+              git clone https://github.com/DiiCTATOR/ai-resume-screener.git "$HOME/ai-resume-screener"
+            fi
+
+            cd "$HOME/ai-resume-screener"
+            
+            echo "🔄 Pulling latest code..."
             git pull origin main
-            
-            echo "📥 Updating dependencies..."
+
+            # Setup environment templates if missing
+            [ -f backend_ai/.env ] || cp backend_ai/.env.example backend_ai/.env
+            [ -f mern_ai/.env ] || cp mern_ai/.env.example mern_ai/.env
+
+            # Ensure PM2 is installed
+            if ! command -v pm2 &> /dev/null; then
+              sudo npm install -g pm2
+            fi
+
+            echo "📦 Installing dependencies..."
             npm run install:all
-            
+
             echo "🔨 Building frontend..."
             npm run build
-            
-            echo "🔄 Reloading PM2 process..."
+
+            echo "🔄 Starting / Reloading with PM2..."
             pm2 reload ecosystem.config.js --update-env || pm2 start ecosystem.config.js
             pm2 save
-            
-            echo "🎉 Application successfully deployed!"
+
+            echo "🎉 Deployment completed successfully!"
             pm2 status
