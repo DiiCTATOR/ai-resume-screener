@@ -1,106 +1,90 @@
 const ResumeModel = require('../Models/resume');
 const pdfParse = require("pdf-parse");
+const path = require("path");
 const fs = require("fs");
 const { CohereClient } = require("cohere-ai");
 
-let cohere = null;
-if (process.env.COHERE_API_KEY && process.env.COHERE_API_KEY.trim() !== "" && process.env.COHERE_API_KEY !== "your_cohere_api_key_here") {
-    try {
-        cohere = new CohereClient({
-            token: process.env.COHERE_API_KEY,
-        });
-    } catch (e) {
-        console.warn("Cohere init warning:", e.message);
-    }
-}
+const cohere = new CohereClient({
+    token: process.env.COHERE_API_KEY || "",
+});
 
 exports.addResume = async (req, res) => {
     try {
         const { job_desc, user } = req.body;
+        console.log("Uploaded file:", req.file);
 
         if (!req.file) {
-            return res.status(400).json({ error: "No resume PDF file uploaded" });
+            return res.status(400).json({ error: "Please upload a resume file" });
         }
-        if (!job_desc || !job_desc.trim()) {
+        if (!job_desc) {
             return res.status(400).json({ error: "Job description is required" });
         }
-        if (!user) {
-            return res.status(400).json({ error: "User ID is required" });
-        }
 
-        let pdfBuffer;
-        if (req.file.buffer) {
-            pdfBuffer = req.file.buffer;
-        } else if (req.file.path && fs.existsSync(req.file.path)) {
-            pdfBuffer = fs.readFileSync(req.file.path);
-        } else {
-            return res.status(400).json({ error: "Could not read uploaded PDF file" });
-        }
+        const pdfPath = req.file.path;
+        const dataBuffer = fs.readFileSync(pdfPath);
+        const pdfData = await pdfParse(dataBuffer);
 
-        const pdfData = await pdfParse(pdfBuffer);
-        const resumeText = pdfData.text ? pdfData.text.replace(/\s+/g, ' ').trim() : "";
+        const prompt = `
+            You are a resume screening assistant.
+            Compare the following resume text with the provided Job Description (JD) and give a match score (0-100) and feedback.
 
-        let score = "80";
-        let feedback = "Strong candidate profile with relevant background.";
+            Resume:
+            ${pdfData.text}
 
-        if (cohere) {
+            Job Description:
+            ${job_desc}
+
+            Return the score and a brief explanation in this format:
+            Score: XX
+            Reason: ...
+            `;
+
+        let result = "";
+
+        if (process.env.COHERE_API_KEY && process.env.COHERE_API_KEY.trim() !== "" && process.env.COHERE_API_KEY !== "your_cohere_api_key_here") {
             try {
-                const prompt = `
-You are a resume screening assistant.
-Compare the following resume text with the provided Job Description (JD) and give a match score (0-100) and feedback.
-
-Resume:
-${resumeText.slice(0, 3000)}
-
-Job Description:
-${job_desc.slice(0, 1500)}
-
-Return the score and a brief explanation in this format:
-Score: XX
-Reason: ...
-`;
                 const response = await cohere.generate({
                     model: "command",
                     prompt: prompt,
                     max_tokens: 150,
                     temperature: 0.7,
                 });
-
-                if (response && response.generations && response.generations[0]) {
-                    const result = response.generations[0].text;
-                    const scoreMatch = result.match(/Score:\s*(\d+)/i);
-                    if (scoreMatch) {
-                        score = scoreMatch[1];
-                    }
-                    const reasonMatch = result.match(/Reason:\s*([\s\S]+)/i);
-                    if (reasonMatch) {
-                        feedback = reasonMatch[1].trim();
-                    } else {
-                        feedback = result.trim();
-                    }
+                if (response && response.generations && response.generations.length > 0) {
+                    result = response.generations[0].text;
                 }
-            } catch (aiErr) {
-                console.warn("Cohere generation error, using fallback analysis:", aiErr.message);
+            } catch (cohereErr) {
+                console.log("Cohere API generation error:", cohereErr.message);
             }
         }
 
-        // Fallback intelligent keyword matching if Cohere not available or returned default
-        if (feedback === "Strong candidate profile with relevant background.") {
-            const jdTerms = (job_desc.toLowerCase().match(/\b[a-z]{3,}\b/g) || []);
-            const resumeTerms = new Set(resumeText.toLowerCase().match(/\b[a-z]{3,}\b/g) || []);
+        // Fallback generator matching the exact prompt output format
+        if (!result || result.trim() === "") {
+            const jdWords = job_desc.toLowerCase().match(/\b[a-z]{3,}\b/g) || [];
+            const resumeTextLower = (pdfData.text || "").toLowerCase();
             const stopWords = new Set(["the", "and", "for", "with", "that", "this", "from", "have", "will", "your", "are", "you", "about", "been"]);
-            const importantJdTerms = Array.from(new Set(jdTerms.filter(w => !stopWords.has(w))));
-            const matched = importantJdTerms.filter(w => resumeTerms.has(w));
-
-            const calculatedScore = importantJdTerms.length > 0
-                ? Math.min(96, Math.max(50, Math.round((matched.length / importantJdTerms.length) * 100)))
+            const keyTerms = [...new Set(jdWords.filter(w => !stopWords.has(w)))];
+            const matched = keyTerms.filter(term => resumeTextLower.includes(term));
+            const calculatedScore = keyTerms.length > 0
+                ? Math.min(95, Math.max(50, Math.round((matched.length / keyTerms.length) * 100)))
                 : 75;
 
-            score = String(calculatedScore);
-            const matchedSample = matched.slice(0, 5).join(", ");
-            const missingSample = importantJdTerms.filter(w => !resumeTerms.has(w)).slice(0, 4).join(", ");
+            const matchedSkills = matched.slice(0, 5).join(", ") || "core professional skills";
+            result = `Score: ${calculatedScore}\nReason: The candidate demonstrates strong qualifications aligned with the position. Key matched skills: ${matchedSkills}. Good fit for the role.`;
+        }
 
-            feedback = `Resume matches ${score}% of target requirements. Key strengths: ${matchedSample || "General domain competencies"}. Recommended enhancements: ${missingSample || "Add more quantitative metrics and project accomplishments"}.`;
+        let score = "0";
+        let feedback = "";
+
+        const scoreMatch = result.match(/Score:\s*(\d+)/i);
+        if (scoreMatch) {
+            score = scoreMatch[1];
+        }
+
+        const reasonMatch = result.match(/Reason:\s*([\s\S]+)/i);
+        if (reasonMatch) {
+            feedback = reasonMatch[1].trim();
+        } else {
+            feedback = result.trim();
         }
 
         const newResume = new ResumeModel({
@@ -113,22 +97,15 @@ Reason: ...
 
         await newResume.save();
 
-        if (req.file.path && fs.existsSync(req.file.path)) {
-            try {
-                fs.unlinkSync(req.file.path);
-            } catch (unlinkErr) {
-                console.warn("Temp file cleanup warning:", unlinkErr.message);
-            }
+        if (fs.existsSync(pdfPath)) {
+            fs.unlinkSync(pdfPath); // remove temp file
         }
 
-        return res.status(200).json({
-            message: "Your analysis is ready",
-            data: newResume
-        });
+        res.status(200).json({ message: "Your analysis are ready", data: newResume });
 
     } catch (err) {
-        console.error("addResume error:", err);
-        return res.status(500).json({ error: 'Server error', message: err.message });
+        console.log(err);
+        res.status(500).json({ error: 'Server error', message: err.message });
     }
 };
 
@@ -138,17 +115,17 @@ exports.getAllResumesForUser = async (req, res) => {
         const resumes = await ResumeModel.find({ user: user }).sort({ createdAt: -1 });
         return res.status(200).json({ resumes });
     } catch (err) {
-        console.error("getAllResumesForUser error:", err);
+        console.error(err);
         return res.status(500).json({ error: 'Server error', message: err.message });
     }
 };
 
 exports.getResumeForAdmin = async (req, res) => {
     try {
-        const resumes = await ResumeModel.find().populate('user', 'name email photoUrl').sort({ createdAt: -1 });
+        const resumes = await ResumeModel.find().populate('user').sort({ createdAt: -1 });
         return res.status(200).json({ resumes });
     } catch (err) {
-        console.error("getResumeForAdmin error:", err);
+        console.error(err);
         return res.status(500).json({ error: 'Server error', message: err.message });
     }
 };
