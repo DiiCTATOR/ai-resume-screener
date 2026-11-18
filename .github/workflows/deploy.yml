@@ -1,4 +1,4 @@
-name: CI/CD Pipeline - Build and Deploy to AWS EC2
+name: Build and deploy to AWS EC2
 
 on:
   push:
@@ -9,95 +9,84 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-resume-screener-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  # =========================================================================
-  # 1. Continuous Integration (CI): Verify Build
-  # =========================================================================
   build:
-    name: Build & Test
+    name: Build application
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            backend_ai/package-lock.json
+            mern_ai/package-lock.json
 
-      - name: Install Dependencies
-        run: |
-          npm run install:all
+      - name: Install dependencies
+        run: npm run install:all
 
-      - name: Build Frontend into backend_ai/build
-        run: |
-          npm run build
+      - name: Build frontend
+        run: npm run build
 
-      - name: Verify Build Output
-        run: |
-          test -f backend_ai/build/index.html || { echo "Build artifact missing!"; exit 1; }
-          echo "✅ Build completed and verified successfully!"
+      - name: Verify build output
+        run: test -f backend_ai/build/index.html
 
-  # =========================================================================
-  # 2. Continuous Deployment (CD): Deploy to AWS EC2 via SSH
-  # =========================================================================
   deploy:
     name: Deploy to EC2
     needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
-      - name: Deploy to AWS EC2 via SSH
+      - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          port: 22
+          port: ${{ secrets.EC2_PORT || 22 }}
           script: |
-            echo "🚀 Deploying to EC2..."
-            
-            # Ensure swap space exists to prevent memory errors on micro instances
-            if [ -z "$(swapon --show)" ]; then
-              echo "🧠 Creating 2GB swap space..."
-              sudo fallocate -l 2G /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
-              sudo chmod 600 /swapfile
-              sudo mkswap /swapfile
-              sudo swapon /swapfile
-              echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+            set -eu
+
+            APP_DIR="$HOME/ai-resume-screener"
+
+            if ! command -v node >/dev/null 2>&1; then
+              curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+              sudo apt-get install -y nodejs
             fi
 
-            # Clone repository if not already cloned
-            if [ ! -d "$HOME/ai-resume-screener" ]; then
-              echo "📥 Cloning repository..."
-              git clone https://github.com/DiiCTATOR/ai-resume-screener.git "$HOME/ai-resume-screener"
+            if [ ! -d "$APP_DIR/.git" ]; then
+              git clone https://github.com/DiiCTATOR/ai-resume-screener.git "$APP_DIR"
             fi
 
-            cd "$HOME/ai-resume-screener"
-            
-            echo "🔄 Pulling latest code..."
-            git pull origin main
+            cd "$APP_DIR"
+            git pull --ff-only origin main
 
-            # Setup environment templates if missing
+            # Create templates on first deploy. Replace their placeholder values
+            # with real credentials on EC2 before the application is used.
             [ -f backend_ai/.env ] || cp backend_ai/.env.example backend_ai/.env
             [ -f mern_ai/.env ] || cp mern_ai/.env.example mern_ai/.env
 
-            # Ensure PM2 is installed
-            if ! command -v pm2 &> /dev/null; then
-              sudo npm install -g pm2
-            fi
-
-            echo "📦 Installing dependencies..."
             npm run install:all
-
-            echo "🔨 Building frontend..."
             npm run build
 
-            echo "🔄 Starting / Reloading with PM2..."
+            if ! command -v pm2 >/dev/null 2>&1; then
+              sudo npm install --global pm2
+            fi
+
             pm2 reload ecosystem.config.js --update-env || pm2 start ecosystem.config.js
             pm2 save
-
-            echo "🎉 Deployment completed successfully!"
             pm2 status
+
