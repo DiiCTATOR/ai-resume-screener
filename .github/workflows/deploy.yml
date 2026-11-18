@@ -22,53 +22,55 @@ concurrency:
 jobs:
 
   # ==========================================
-  # JOB 1: BUILD AND VERIFY APPLICATION
+  # JOB 1: BUILD AND VERIFY ON EC2
   # ==========================================
 
   build:
-    name: Build Application
-    runs-on: ubuntu-24.04
+    name: Build Application on EC2
+    runs-on: [self-hosted, linux, x64]
 
     steps:
 
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: |
-            backend_ai/package-lock.json
-            mern_ai/package-lock.json
-
-      - name: Check Node and NPM Versions
+      - name: Check EC2 Environment
         run: |
+          set -euo pipefail
+          whoami
           node --version
           npm --version
+          git --version
+          df -h
+          free -h
 
       - name: Install Dependencies
-        run: npm run install:all
+        run: |
+          set -euo pipefail
+          npm run install:all
 
       - name: Build Frontend
-        run: npm run build
+        run: |
+          set -euo pipefail
+          npm run build
 
       - name: Verify Build Output
         run: |
+          set -euo pipefail
+
           if [ ! -f backend_ai/build/index.html ]; then
-            echo "ERROR: Frontend build output not found!"
+            echo "Frontend build output missing!"
             exit 1
           fi
 
-          echo "Frontend build verified successfully."
+          echo "Build successful."
 
   # ==========================================
-  # JOB 2: DEPLOY APPLICATION ON EC2
+  # JOB 2: DEPLOY ON SAME EC2 RUNNER
   # ==========================================
 
   deploy:
-    name: Deploy to AWS EC2
+    name: Deploy Application on EC2
     needs: build
 
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -77,120 +79,60 @@ jobs:
 
     steps:
 
-      # --------------------------------------
-      # STEP 1: CHECK RUNNER ENVIRONMENT
-      # --------------------------------------
-
-      - name: Check EC2 Environment
-        shell: bash
+      - name: Check Deployment Environment
         run: |
           set -euo pipefail
-
-          echo "Checking EC2 environment..."
-
           whoami
           pwd
-          node --version
-          npm --version
-          git --version
+          pm2 --version || true
 
-      # --------------------------------------
-      # STEP 2: CHECK PROJECT DIRECTORY
-      # --------------------------------------
-
-      - name: Check Application Directory
-        shell: bash
+      - name: Verify Application Directory
         run: |
           set -euo pipefail
 
           APP_DIR="/home/ubuntu/ai-resume-screener"
 
           if [ ! -d "$APP_DIR/.git" ]; then
-            echo "ERROR: Project repository not found."
+            echo "Application repository not found!"
             exit 1
           fi
 
-          echo "Application directory verified."
-
-      # --------------------------------------
-      # STEP 3: UPDATE SOURCE CODE
-      # --------------------------------------
-
-      - name: Pull Latest Repository Changes
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APP_DIR="/home/ubuntu/ai-resume-screener"
-
-          cd "$APP_DIR"
-
-          echo "Fetching latest code..."
-
-          git fetch origin main
-          git checkout main
-          git pull --ff-only origin main
-
-          echo "Repository updated successfully."
-
-      # --------------------------------------
-      # STEP 4: CHECK ENVIRONMENT FILES
-      # --------------------------------------
-
-      - name: Configure Environment Files
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APP_DIR="/home/ubuntu/ai-resume-screener"
-
-          cd "$APP_DIR"
-
-          if [ ! -f backend_ai/.env ]; then
-            if [ -f backend_ai/.env.example ]; then
-              cp backend_ai/.env.example backend_ai/.env
-              chmod 600 backend_ai/.env
-              echo "Created backend environment file."
-            else
-              echo "ERROR: backend_ai/.env.example missing."
-              exit 1
-            fi
-          fi
-
-          if [ ! -f mern_ai/.env ]; then
-            if [ -f mern_ai/.env.example ]; then
-              cp mern_ai/.env.example mern_ai/.env
-              chmod 600 mern_ai/.env
-              echo "Created frontend environment file."
-            else
-              echo "ERROR: mern_ai/.env.example missing."
-              exit 1
-            fi
-          fi
-
-      # --------------------------------------
-      # STEP 5: INSTALL DEPENDENCIES
-      # --------------------------------------
-
-      - name: Install Application Dependencies
-        shell: bash
+      - name: Pull Latest Code
         run: |
           set -euo pipefail
 
           cd /home/ubuntu/ai-resume-screener
 
-          echo "Installing backend and frontend dependencies..."
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+
+      - name: Configure Environment
+        run: |
+          set -euo pipefail
+
+          cd /home/ubuntu/ai-resume-screener
+
+          test -f backend_ai/.env || {
+            echo "ERROR: backend_ai/.env is missing."
+            exit 1
+          }
+
+          chmod 600 backend_ai/.env
+
+          if [ -f mern_ai/.env ]; then
+            chmod 600 mern_ai/.env
+          fi
+
+      - name: Install Application Dependencies
+        run: |
+          set -euo pipefail
+
+          cd /home/ubuntu/ai-resume-screener
 
           npm run install:all
 
-          echo "Dependencies installed successfully."
-
-      # --------------------------------------
-      # STEP 6: BUILD FRONTEND
-      # --------------------------------------
-
-      - name: Build Frontend
-        shell: bash
+      - name: Build Production Frontend
         run: |
           set -euo pipefail
 
@@ -198,98 +140,58 @@ jobs:
 
           npm run build
 
-          if [ ! -f backend_ai/build/index.html ]; then
-            echo "ERROR: Frontend build failed."
-            exit 1
-          fi
+          test -f backend_ai/build/index.html
 
-          echo "Frontend build completed."
-
-      # --------------------------------------
-      # STEP 7: INSTALL PM2
-      # --------------------------------------
-
-      - name: Check and Install PM2
-        shell: bash
+      - name: Check PM2
         run: |
           set -euo pipefail
 
           if ! command -v pm2 >/dev/null 2>&1; then
-            npm install --global pm2
+            npm install -g pm2
           fi
 
-          pm2 --version
-
-      # --------------------------------------
-      # STEP 8: START OR RELOAD APPLICATION
-      # --------------------------------------
-
-      - name: Start Application with PM2
-        shell: bash
+      - name: Start or Reload Application
         run: |
           set -euo pipefail
 
           cd /home/ubuntu/ai-resume-screener
 
-          if [ ! -f ecosystem.config.js ]; then
-            echo "ERROR: ecosystem.config.js missing."
-            exit 1
-          fi
+          test -f ecosystem.config.js
 
           pm2 startOrReload ecosystem.config.js --update-env
 
-          echo "Application started or reloaded."
-
-      # --------------------------------------
-      # STEP 9: SAVE PM2 PROCESS
-      # --------------------------------------
-
-      - name: Save PM2 Process List
-        shell: bash
-        run: |
-          set -euo pipefail
-
           pm2 save
 
-          pm2 status
-
-      # --------------------------------------
-      # STEP 10: APPLICATION HEALTH CHECK
-      # --------------------------------------
-
-      - name: Verify Application Health
-        shell: bash
+      - name: Application Health Check
         run: |
           set -euo pipefail
 
-          echo "Waiting for application..."
+          echo "Checking application health..."
 
-          sleep 5
+          for i in {1..12}; do
+            if curl -fsS \
+              http://127.0.0.1:4000/api/health; then
 
-          if ! curl -fsS \
-            http://127.0.0.1:4000/api/health; then
+              echo "Application is healthy."
+              exit 0
+            fi
 
-            echo "ERROR: Application health check failed."
+            echo "Attempt $i failed. Retrying..."
+            sleep 5
+          done
 
-            pm2 logs ai-resume-screener \
-              --lines 50 \
-              --nostream
+          echo "Application health check failed."
 
-            exit 1
-          fi
+          pm2 logs ai-resume-screener \
+            --lines 50 \
+            --nostream || true
 
-          echo ""
-          echo "Application health check passed."
+          exit 1
 
-      # --------------------------------------
-      # STEP 11: FINAL DEPLOYMENT STATUS
-      # --------------------------------------
-
-      - name: Deployment Completed
-        shell: bash
+      - name: Deployment Status
         run: |
-          echo "===================================="
+          echo "=================================="
           echo "AI RESUME SCREENER DEPLOYED"
-          echo "===================================="
+          echo "=================================="
 
           pm2 status
