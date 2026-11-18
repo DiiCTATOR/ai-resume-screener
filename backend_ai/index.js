@@ -10,8 +10,16 @@ require('./conn');
 app.use(express.json());
 app.use(cors({
     credentials: true,
-    origin: process.env.CLIENT_URL || "http://localhost:5173"
+    origin: (origin, callback) => {
+        // Allow requests from all origins (localhost, EC2 IP, or custom domain)
+        callback(null, true);
+    }
 }));
+
+// Cloud health check route
+app.get('/api/health', (req, res) => {
+    res.status(200).json({ status: 'ok', uptime: process.uptime(), timestamp: new Date() });
+});
 
 const UserRoutes = require('./Routes/user');
 const ResumeRoutes = require('./Routes/resume');

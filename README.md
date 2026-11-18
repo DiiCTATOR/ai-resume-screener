@@ -5,16 +5,19 @@ A full-stack web application featuring an Express/Node.js backend and a Vite Rea
 ## Project Structure
 
 ```
-├── backend_ai/       # Express.js API server & static file host
-│   ├── build/        # Compiled frontend production assets
-│   └── uploads/      # Temporary resume upload storage
-├── mern_ai/          # Vite + React client source
-├── package.json      # Unified root scripts for build & run
-├── .gitignore        # Git ignore rules for root, client, and server
-├── .gitattributes    # Normalized line ending configuration
+├── backend_ai/          # Express.js API server & static file host
+│   ├── build/           # Compiled frontend production assets
+│   └── uploads/         # Temporary resume upload storage
+├── mern_ai/             # Vite + React client source
+├── ecosystem.config.js  # PM2 production configuration for AWS EC2
+├── deploy.sh            # Automated EC2 deployment script
+├── nginx.conf.example   # Nginx reverse proxy configuration template
+├── package.json         # Unified root scripts for build & run
+├── .gitignore           # Git ignore rules for root, client, and server
+├── .gitattributes       # Normalized line ending configuration
 ```
 
-## Quick Start (Unified)
+## Quick Start (Local)
 
 From the project root:
 
@@ -40,16 +43,37 @@ From the project root:
 
 ---
 
-## Development Mode (Separate Ports)
+## AWS EC2 Deployment (Turnkey)
 
-- **Backend (Port 4000):**
-  ```bash
-  npm run dev:backend
-  ```
-- **Frontend (Port 5173 with Vite proxy to :4000):**
-  ```bash
-  npm run dev:frontend
-  ```
+### 1. Security Group
+Make sure your AWS EC2 Security Group allows:
+- **Port 22** (SSH)
+- **Port 4000** (or Port 80/443 for HTTP/HTTPS)
+
+### 2. One-Command Deploy on EC2
+SSH into your Ubuntu/Debian EC2 instance and run:
+
+```bash
+git clone https://github.com/DiiCTATOR/ai-resume-screener.git
+cd ai-resume-screener
+chmod +x deploy.sh
+./deploy.sh
+```
+
+The script will automatically:
+- Install Node.js 22 LTS (if missing)
+- Install all dependencies
+- Compile the React frontend into `backend_ai/build`
+- Launch and daemonize the app with **PM2** (`ecosystem.config.js`)
+- Persist the process across EC2 server reboots
+
+### 3. Manage with PM2
+```bash
+pm2 status                       # View app status
+pm2 logs ai-resume-screener      # View live logs
+pm2 restart ai-resume-screener   # Restart the app
+pm2 stop ai-resume-screener      # Stop the app
+```
 
 ## License
 
