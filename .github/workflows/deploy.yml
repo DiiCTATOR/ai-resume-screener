@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - main
-
   workflow_dispatch:
 
 permissions:
@@ -27,17 +26,18 @@ jobs:
       NODE_OPTIONS: --max-old-space-size=384
 
     steps:
+      # 1. Check EC2 environment
       - name: Check EC2 Environment
         run: |
           set -euo pipefail
 
-          whoami
+          echo "Checking EC2 environment..."
           node --version
           npm --version
-          git --version
           pm2 --version
           df -h /
 
+      # 2. Pull latest code
       - name: Pull Latest Repository Changes
         run: |
           set -euo pipefail
@@ -50,30 +50,23 @@ jobs:
 
           echo "Repository updated."
 
+      # 3. Verify configuration
       - name: Verify Environment Files
         run: |
           set -euo pipefail
 
           cd "$APP_DIR"
 
-          test -f backend_ai/.env || {
-            echo "ERROR: backend_ai/.env missing"
-            exit 1
-          }
-
-          test -f mern_ai/.env || {
-            echo "ERROR: mern_ai/.env missing"
-            exit 1
-          }
-
+          test -f backend_ai/.env
+          test -f mern_ai/.env
           test -f ecosystem.config.js
-
           test -f backend_ai/package-lock.json
           test -f mern_ai/package-lock.json
 
           echo "Configuration verified."
 
-      - name: Install Dependencies If Needed
+      # 4. Install dependencies only when required
+      - name: Install Dependencies
         run: |
           set -euo pipefail
 
@@ -99,12 +92,12 @@ jobs:
              [ ! -d backend_ai/node_modules ] ||
              [ ! -d mern_ai/node_modules ]; then
 
-            echo "Dependencies changed or missing."
+            echo "Installing dependencies..."
 
             AVAILABLE_MB=$(df -Pm "$APP_DIR" | awk 'NR==2 {print $4}')
 
             if [ "$AVAILABLE_MB" -lt 1024 ]; then
-              echo "ERROR: At least 1 GB free disk space is required."
+              echo "ERROR: Less than 1 GB free disk space."
               exit 1
             fi
 
@@ -112,10 +105,12 @@ jobs:
             npm ci --prefix mern_ai
 
             echo "$CURRENT_HASH" > "$DEPS_MARKER"
+
           else
             echo "Dependencies unchanged. Skipping installation."
           fi
 
+      # 5. Build frontend
       - name: Build Frontend
         run: |
           set -euo pipefail
@@ -124,17 +119,12 @@ jobs:
 
           npm run build
 
-          echo "Frontend build completed."
+          test -f backend_ai/build/index.html
 
-      - name: Verify Build Output
-        run: |
-          set -euo pipefail
+          echo "Frontend build successful."
 
-          test -f "$APP_DIR/backend_ai/build/index.html"
-
-          echo "Frontend build verified."
-
-      - name: Start or Reload Application
+      # 6. Start or reload application
+      - name: Deploy With PM2
         run: |
           set -euo pipefail
 
@@ -145,11 +135,13 @@ jobs:
 
           pm2 status
 
-      - name: Verify Application Health
+      # 7. Verify backend health
+      - name: Application Health Check
         run: |
           set -euo pipefail
 
           for attempt in $(seq 1 20); do
+
             if curl -fsS --max-time 5 \
               http://127.0.0.1:4000/api/health; then
 
@@ -169,10 +161,9 @@ jobs:
 
           exit 1
 
+      # 8. Deployment confirmation
       - name: Deployment Completed
         run: |
-          echo "=================================="
           echo "AI RESUME SCREENER DEPLOYED"
-          echo "=================================="
-
           pm2 status
+          df -h /
