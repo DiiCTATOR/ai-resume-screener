@@ -2,8 +2,8 @@ import { useEffect, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import { AuthContext } from "../AuthContext";
 
-const WithAuthHOC = (WrappedComponent) => {
-    return (props) => {
+const withAuthHOC = (WrappedComponent) => {
+    const ComponentWithAuth = (props) => {
         const navigate = useNavigate();
         const { setLogin, userInfo, setUserInfo } = useContext(AuthContext);
 
@@ -24,10 +24,13 @@ const WithAuthHOC = (WrappedComponent) => {
                     console.warn("Could not parse stored user info:", e.message);
                 }
             }
-        }, [navigate]);
+        }, [navigate, setLogin, setUserInfo, userInfo]);
 
         return <WrappedComponent {...props} />;
     };
+
+    ComponentWithAuth.displayName = `WithAuth(${WrappedComponent.displayName || WrappedComponent.name || 'Component'})`;
+    return ComponentWithAuth;
 };
 
-export default WithAuthHOC;
+export default withAuthHOC;

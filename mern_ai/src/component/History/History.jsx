@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import styles from './History.module.css';
 import { Skeleton } from '@mui/material';
 import WithAuthHOC from '../../utils/HOC/withAuthHOC';
@@ -42,7 +43,7 @@ const History = () => {
         }
 
         {
-          data.map((item, index) => {
+          data.map((item) => {
             return (
               <div key={item._id} className={styles.HistoryCard}>
                 <div className={styles.cardPercentage}>{item.score}%</div>

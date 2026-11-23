@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import styles from './Dashboard.module.css';
 import CreditScoreIcon from '@mui/icons-material/CreditScore';
 import Skeleton from '@mui/material/Skeleton';

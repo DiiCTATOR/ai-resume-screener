@@ -1,4 +1,3 @@
-import React from 'react'
 import styles from './SideBar.module.css';
 import ArticleIcon from '@mui/icons-material/Article';
 import DashboardIcon from '@mui/icons-material/Dashboard';
@@ -12,7 +11,7 @@ import { AuthContext } from '../../utils/AuthContext';
 const SideBar = () => {
     const location = useLocation();
     const navigate = useNavigate();
-    const { isLogin, setLogin, userInfo, setUserInfo } = useContext(AuthContext);
+    const { setLogin, setUserInfo } = useContext(AuthContext);
 
     const handleLogout = () => {
         setLogin(false);
