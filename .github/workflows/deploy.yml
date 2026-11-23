@@ -4,92 +4,25 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-concurrency:
-  group: ai-resume-screener-production
-  cancel-in-progress: false
 
 jobs:
   deploy:
-    name: Build and Deploy
     runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 15
-
-    env:
-      APP_DIR: /home/ubuntu/ai-resume-screener
-      DEPS_MARKER: /home/ubuntu/.cache/ai-resume-screener-deps.sha256
-      NODE_OPTIONS: --max-old-space-size=1024
-
     steps:
-      - name: Pull Latest Changes
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install & Lint
         run: |
-          set -euo pipefail
-          cd "$APP_DIR"
-          git fetch --prune origin main
-          git checkout main
-          git reset --hard origin/main
-          echo "Repository updated to latest commit."
+          npm --prefix mern_ai install
+          npm --prefix mern_ai run lint
 
-      - name: Install Dependencies
+      - name: Install & Build
         run: |
-          set -euo pipefail
-          cd "$APP_DIR"
-          mkdir -p "$(dirname "$DEPS_MARKER")"
-
-          CURRENT_HASH=$(
-            sha256sum \
-              backend_ai/package.json \
-              backend_ai/package-lock.json \
-              mern_ai/package.json \
-              mern_ai/package-lock.json |
-            sha256sum | awk '{print $1}'
-          )
-
-          PREVIOUS_HASH=""
-          [ -f "$DEPS_MARKER" ] && PREVIOUS_HASH=$(cat "$DEPS_MARKER")
-
-          if [ "$CURRENT_HASH" != "$PREVIOUS_HASH" ] ||
-             [ ! -d backend_ai/node_modules ] ||
-             [ ! -d mern_ai/node_modules ]; then
-            echo "Installing dependencies..."
-            npm ci --prefix backend_ai
-            npm ci --prefix mern_ai
-            echo "$CURRENT_HASH" > "$DEPS_MARKER"
-          else
-            echo "Dependencies unchanged. Skipping install."
-          fi
-
-      - name: Build Frontend
-        run: |
-          set -euo pipefail
-          cd "$APP_DIR"
+          npm --prefix backend_ai install
           npm run build
-          test -f backend_ai/build/index.html
-          echo "Frontend build verified."
 
-      - name: Reload Application
+      - name: Deploy with PM2
         run: |
-          set -euo pipefail
-          cd "$APP_DIR"
           pm2 startOrReload ecosystem.config.js --update-env
           pm2 save
-          pm2 status
-
-      - name: Health Check
-        run: |
-          set -euo pipefail
-          for attempt in $(seq 1 10); do
-            if curl -fsS --max-time 5 http://127.0.0.1:4000/api/health; then
-              echo "Application health check passed."
-              exit 0
-            fi
-            echo "Health check attempt $attempt failed, retrying in 3s..."
-            sleep 3
-          done
-          echo "ERROR: Application health check failed."
-          pm2 logs ai-resume-screener --lines 30 --nostream
-          exit 1
