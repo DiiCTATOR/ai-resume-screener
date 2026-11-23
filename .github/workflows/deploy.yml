@@ -4,11 +4,6 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:
-
-defaults:
-  run:
-    shell: bash -l {0}
 
 jobs:
   deploy:
@@ -16,15 +11,6 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
-      - name: Ensure Node and NPM in PATH
-        run: |
-          for p in /usr/local/bin /usr/bin $(find /home/ubuntu/.nvm/versions/node -maxdepth 2 -name bin 2>/dev/null); do
-            if [ -x "$p/node" ]; then
-              echo "$p" >> "$GITHUB_PATH"
-              echo "Exported $p to PATH"
-            fi
-          done
 
       - name: Install & Lint
         run: |
