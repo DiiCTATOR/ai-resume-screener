@@ -21,6 +21,7 @@ jobs:
         run: |
           npm --prefix backend_ai install
           npm run build
+          npm run db:migrate
 
       - name: Deploy with PM2
         run: |

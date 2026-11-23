@@ -10,7 +10,8 @@ module.exports = {
       max_memory_restart: "1G",
       env: {
         NODE_ENV: "production",
-        PORT: 4000
+        PORT: 4000,
+        MONGODB_URI: "mongodb://127.0.0.1:27017/ai_resume_mern"
       }
     }
   ]
