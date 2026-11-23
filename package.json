@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "install:all": "npm --prefix backend_ai install && npm --prefix mern_ai install",
+    "db:migrate": "node backend_ai/migrate.js",
     "build": "npm --prefix mern_ai run build",
     "start": "node backend_ai/index.js",
     "dev:backend": "nodemon backend_ai/index.js",
