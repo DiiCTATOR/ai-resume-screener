@@ -1,4 +1,3 @@
-
 name: Deploy AI Resume Screener
 
 on:
@@ -18,60 +17,27 @@ jobs:
   deploy:
     name: Build and Deploy
     runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 30
+    timeout-minutes: 15
 
     env:
       APP_DIR: /home/ubuntu/ai-resume-screener
       DEPS_MARKER: /home/ubuntu/.cache/ai-resume-screener-deps.sha256
-      NODE_OPTIONS: --max-old-space-size=384
+      NODE_OPTIONS: --max-old-space-size=1024
 
     steps:
-      # 1. Check EC2 environment
-      - name: Check EC2 Environment
+      - name: Pull Latest Changes
         run: |
           set -euo pipefail
-
-          echo "Checking EC2 environment..."
-          node --version
-          npm --version
-          pm2 --version
-          df -h /
-
-      # 2. Pull latest code
-      - name: Pull Latest Repository Changes
-        run: |
-          set -euo pipefail
-
           cd "$APP_DIR"
-
           git fetch --prune origin main
           git checkout main
           git reset --hard origin/main
+          echo "Repository updated to latest commit."
 
-          echo "Repository updated."
-
-      # 3. Verify configuration
-      - name: Verify Environment Files
-        run: |
-          set -euo pipefail
-
-          cd "$APP_DIR"
-
-          test -f backend_ai/.env
-          test -f mern_ai/.env
-          test -f ecosystem.config.js
-          test -f backend_ai/package-lock.json
-          test -f mern_ai/package-lock.json
-
-          echo "Configuration verified."
-
-      # 4. Install dependencies only when required
       - name: Install Dependencies
         run: |
           set -euo pipefail
-
           cd "$APP_DIR"
-
           mkdir -p "$(dirname "$DEPS_MARKER")"
 
           CURRENT_HASH=$(
@@ -84,86 +50,46 @@ jobs:
           )
 
           PREVIOUS_HASH=""
-          if [ -f "$DEPS_MARKER" ]; then
-            PREVIOUS_HASH=$(cat "$DEPS_MARKER")
-          fi
+          [ -f "$DEPS_MARKER" ] && PREVIOUS_HASH=$(cat "$DEPS_MARKER")
 
           if [ "$CURRENT_HASH" != "$PREVIOUS_HASH" ] ||
              [ ! -d backend_ai/node_modules ] ||
              [ ! -d mern_ai/node_modules ]; then
-
             echo "Installing dependencies..."
-
-            AVAILABLE_MB=$(df -Pm "$APP_DIR" | awk 'NR==2 {print $4}')
-
-            if [ "$AVAILABLE_MB" -lt 1024 ]; then
-              echo "ERROR: Less than 1 GB free disk space."
-              exit 1
-            fi
-
             npm ci --prefix backend_ai
             npm ci --prefix mern_ai
-
             echo "$CURRENT_HASH" > "$DEPS_MARKER"
-
           else
-            echo "Dependencies unchanged. Skipping installation."
+            echo "Dependencies unchanged. Skipping install."
           fi
 
-      # 5. Build frontend
       - name: Build Frontend
         run: |
           set -euo pipefail
-
           cd "$APP_DIR"
-
           npm run build
-
           test -f backend_ai/build/index.html
+          echo "Frontend build verified."
 
-          echo "Frontend build successful."
-
-      # 6. Start or reload application
-      - name: Deploy With PM2
+      - name: Reload Application
         run: |
           set -euo pipefail
-
           cd "$APP_DIR"
-
           pm2 startOrReload ecosystem.config.js --update-env
           pm2 save
-
           pm2 status
 
-      # 7. Verify backend health
-      - name: Application Health Check
+      - name: Health Check
         run: |
           set -euo pipefail
-
-          for attempt in $(seq 1 20); do
-
-            if curl -fsS --max-time 5 \
-              http://127.0.0.1:4000/api/health; then
-
-              echo ""
+          for attempt in $(seq 1 10); do
+            if curl -fsS --max-time 5 http://127.0.0.1:4000/api/health; then
               echo "Application health check passed."
               exit 0
             fi
-
-            echo "Health check attempt $attempt failed."
+            echo "Health check attempt $attempt failed, retrying in 3s..."
             sleep 3
           done
-
           echo "ERROR: Application health check failed."
-
-          pm2 logs ai-resume-screener \
-            --lines 50 --nostream
-
+          pm2 logs ai-resume-screener --lines 30 --nostream
           exit 1
-
-      # 8. Deployment confirmation
-      - name: Deployment Completed
-        run: |
-          echo "AI RESUME SCREENER DEPLOYED"
-          pm2 status
-          df -h /
